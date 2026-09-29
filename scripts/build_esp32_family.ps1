@@ -51,6 +51,13 @@ foreach ($p in @(
 }
 
 $cmakeArgs = @("-DKCONFIG_WARNINGS_AS_ERRORS=n")
+
+# C6/H2 DevKit USB is USB-Serial-JTAG — auto-select console overlay
+if (-not $Overlay -and $Board -match "esp32c6|esp32h2") {
+    $auto = Join-Path $repo "zephyr/samples/ansilic/esp32s3_zeplinux_tests/esp32c6_usb_console.overlay"
+    if (Test-Path $auto) { $Overlay = $auto }
+}
+
 if ($Overlay) {
     if (-not [System.IO.Path]::IsPathRooted($Overlay)) {
         $Overlay = Join-Path $repo $Overlay

@@ -1,0 +1,11 @@
+/* ESP32-C6: console on USB-Serial-JTAG (the USB port on DevKitC) */
+&usb_serial {
+	status = "okay";
+};
+
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};
