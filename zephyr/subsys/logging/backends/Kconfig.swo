@@ -1,0 +1,8 @@
+# stub — SWO logging backend not used on ESP32
+config LOG_BACKEND_SWO_REF_FREQ_HZ
+	int
+	default 16000000
+
+config LOG_BACKEND_SWO_FREQ_HZ
+	int
+	default 2000000

@@ -1,0 +1,8 @@
+# stub — I2C target mode not used on ESP32-S3 build
+config I2C_TARGET_BUFFER_MODE
+	bool
+	default n
+
+config I2C_TARGET_ALLOW_POWER_SAVING
+	bool
+	default n
