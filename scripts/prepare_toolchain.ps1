@@ -1,33 +1,29 @@
-# Prepare Espressif toolchain tree for Zephyr (ESP32 family)
-# Works on Windows PowerShell; paths are auto-detected.
-#
-# Usage:
-#   .\scripts\prepare_toolchain.ps1
-#   .\scripts\prepare_toolchain.ps1 -Root <platformio_packages> -Dest <toolchain_dir>
+# Prepare Espressif toolchain tree for Zephyr (whole ESP32 family).
+# Usage: .\scripts\prepare_toolchain.ps1 [-Root <platformio packages>] [-Dest <dir>]
 
 param(
     [string]$Root = "",
-    [string]$Dest = ""
+    [string]$Dest = "",
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
 
-# --- locate PlatformIO packages (or pass -Root) ---
 if (-not $Root) {
     $candidates = @(
         (Join-Path $env:USERPROFILE ".platformio\packages"),
-        (Join-Path $env:USERPROFILE ".platformio\packages"),
-        "/root/.platformio/packages",
         (Join-Path $HOME ".platformio/packages")
-    )
+    ) | Where-Object { $_ -and (Test-Path $_) }
     foreach ($c in $candidates) {
-        if (Test-Path (Join-Path $c "toolchain-xtensa-esp-elf")) { $Root = $c; break }
-        if (Test-Path (Join-Path $c "toolchain-riscv32-esp")) { $Root = $c; break }
+        if ((Test-Path (Join-Path $c "toolchain-xtensa-esp-elf")) -or
+            (Test-Path (Join-Path $c "toolchain-riscv32-esp"))) {
+            $Root = $c
+            break
+        }
     }
 }
-if (-not $Root) {
-    throw "Cannot find PlatformIO packages. Install PlatformIO toolchains or pass -Root."
-}
+if (-not $Root) { throw "PlatformIO toolchains not found. Pass -Root or install PlatformIO packages." }
+
 if (-not $Dest) {
     $Dest = Join-Path $env:USERPROFILE "zephyr-esp-tc"
     if (-not $env:USERPROFILE) { $Dest = Join-Path $HOME "zephyr-esp-tc" }
@@ -36,65 +32,74 @@ if (-not $Dest) {
 Write-Host "Root=$Root"
 Write-Host "Dest=$Dest"
 
-function Link-Dir([string]$src, [string]$dst) {
-    if (-not (Test-Path $src)) { return }
-    if (Test-Path $dst) { return }
-    try {
-        New-Item -ItemType Junction -Path $dst -Target $src -ErrorAction Stop | Out-Null
-        Write-Host "  link $(Split-Path $dst -Leaf)"
-    } catch {
-        # fallback: copy is too heavy; try symlink
-        New-Item -ItemType SymbolicLink -Path $dst -Target $src -ErrorAction SilentlyContinue | Out-Null
+if ($Force -and (Test-Path $Dest)) {
+    Get-ChildItem $Dest | ForEach-Object {
+        if ($_.LinkType) { $_.Delete() } else { Remove-Item $_.FullName -Recurse -Force }
     }
 }
 
-function Ensure-Toolchain([string]$pkgName, [string[]]$elfNames) {
-    $pkg = Join-Path $Root $pkgName
-    # PlatformIO may store multiple versions: package@ver
-    if (-not (Test-Path $pkg)) {
-        $pkg = Get-ChildItem $Root -Directory -Filter "$pkgName*" -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
+function Link-Dir([string]$src, [string]$dst) {
+    if (-not (Test-Path $src)) { return $false }
+    if (Test-Path $dst) { return $true }
+    try {
+        New-Item -ItemType Junction -Path $dst -Target $src | Out-Null
+    } catch {
+        New-Item -ItemType SymbolicLink -Path $dst -Target $src -ErrorAction Stop | Out-Null
     }
-    if (-not $pkg) {
-        Write-Host "WARN: package not found: $pkgName"
+    return $true
+}
+
+function Setup-Triple([string]$pkg, [string]$triple, [string[]]$sysroots) {
+    if (-not (Test-Path $pkg)) {
+        $hit = Get-ChildItem $Root -Directory -Filter (Split-Path $pkg -Leaf) -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+        if ($hit) { $pkg = $hit }
+    }
+    if (-not (Test-Path $pkg)) {
+        Write-Host "WARN: skip $triple (package missing)"
         return
     }
-    Write-Host "Using $pkg"
-    foreach ($elf in $elfNames) {
-        $base = Join-Path $Dest $elf
-        New-Item -ItemType Directory -Force -Path $base | Out-Null
-        Link-Dir (Join-Path $pkg "bin") (Join-Path $base "bin")
-        Link-Dir (Join-Path $pkg "libexec") (Join-Path $base "libexec")
-        Link-Dir (Join-Path $pkg "lib") (Join-Path $base "lib")
-        Link-Dir (Join-Path $pkg "include") (Join-Path $base "include")
-        Link-Dir (Join-Path $pkg "share") (Join-Path $base "share")
-        # sysroot dir names vary
-        foreach ($sr in @("xtensa-esp-elf", "xtensa-esp32-elf", "xtensa-esp32s2-elf", "xtensa-esp32s3-elf",
-                          "riscv32-esp-elf", "riscv32-esp32-elf", "riscv32-esp32c3-elf")) {
-            $src = Join-Path $pkg $sr
-            if (Test-Path $src) {
-                Link-Dir $src (Join-Path $base $sr)
-            }
+    $gcc = Join-Path $pkg "bin\$triple-gcc.exe"
+    if (-not (Test-Path $gcc)) {
+        $gcc = Join-Path $pkg "bin\$triple-gcc"
+    }
+    if (-not (Test-Path $gcc)) {
+        Write-Host "WARN: skip $triple (no $triple-gcc in $pkg)"
+        return
+    }
+
+    $base = Join-Path $Dest $triple
+    New-Item -ItemType Directory -Force -Path $base | Out-Null
+    Link-Dir (Join-Path $pkg "bin") (Join-Path $base "bin") | Out-Null
+    Link-Dir (Join-Path $pkg "libexec") (Join-Path $base "libexec") | Out-Null
+    Link-Dir (Join-Path $pkg "lib") (Join-Path $base "lib") | Out-Null
+    Link-Dir (Join-Path $pkg "include") (Join-Path $base "include") | Out-Null
+    Link-Dir (Join-Path $pkg "share") (Join-Path $base "share") | Out-Null
+
+    # Nested sysroot name must end with -elf (Zephyr glob: *-esp*/*-elf)
+    foreach ($sr in $sysroots) {
+        $src = Join-Path $pkg $sr
+        if (Test-Path $src) {
+            Link-Dir $src (Join-Path $base $sr) | Out-Null
         }
     }
+    Write-Host "OK  $triple"
 }
 
+$xtensa = Join-Path $Root "toolchain-xtensa-esp-elf"
+$riscv  = Join-Path $Root "toolchain-riscv32-esp"
+
 # Xtensa: ESP32 / S2 / S3
-Ensure-Toolchain "toolchain-xtensa-esp-elf" @(
-    "xtensa-esp32-elf",
-    "xtensa-esp32s2-elf",
-    "xtensa-esp32s3-elf",
-    "xtensa-esp-elf"
-)
+Setup-Triple $xtensa "xtensa-esp-elf"     @("xtensa-esp-elf")
+Setup-Triple $xtensa "xtensa-esp32-elf"   @("xtensa-esp32-elf", "xtensa-esp-elf")
+Setup-Triple $xtensa "xtensa-esp32s2-elf" @("xtensa-esp32s2-elf", "xtensa-esp-elf")
+Setup-Triple $xtensa "xtensa-esp32s3-elf" @("xtensa-esp32s3-elf", "xtensa-esp-elf")
 
 # RISC-V: C3 / C6 / H2
-Ensure-Toolchain "toolchain-riscv32-esp" @(
-    "riscv32-esp-elf",
-    "riscv32-esp32-elf",
-    "riscv32-esp32c3-elf"
-)
+Setup-Triple $riscv "riscv32-esp-elf"     @("riscv32-esp-elf")
+Setup-Triple $riscv "riscv32-esp32-elf"   @("riscv32-esp32-elf", "riscv32-esp-elf")
+Setup-Triple $riscv "riscv32-esp32c3-elf" @("riscv32-esp32c3-elf", "riscv32-esp-elf")
 
 Write-Host ""
-Write-Host "Toolchain tree ready: $Dest"
-Write-Host "Set ESPRESSIF_TOOLCHAIN_PATH=$Dest when building."
-Get-ChildItem $Dest -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+Write-Host "Ready: $Dest"
+Get-ChildItem $Dest | Select-Object -ExpandProperty Name
