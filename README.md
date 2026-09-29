@@ -33,35 +33,37 @@ west update
 
 ### 2. 准备工具链
 
-Windows（PowerShell）：
-
 ```powershell
 .\scripts\prepare_toolchain.ps1
 ```
 
-需本机已有 Espressif 工具链（如 PlatformIO 的 `toolchain-xtensa-esp-elf`、`toolchain-riscv32-esp`），或自行 `west espressif install`。
+自动查找本机 PlatformIO 工具链（`toolchain-xtensa-esp-elf` / `toolchain-riscv32-esp`），也可用 `-Root` / `-Dest` 指定路径。Linux 可用 `west espressif install`。
 
-### 3. 编译
+### 3. 编译（任意 ESP32 板型）
 
 ```powershell
 .\scripts\build_esp32_family.ps1 -Board esp32s3_devkitm/esp32s3/procpu
-.\scripts\build_esp32_family.ps1 -Board esp32_devkitc/esp32/procpu
+.\scripts\build_esp32_family.ps1 -Board esp32_devkitc
 .\scripts\build_esp32_family.ps1 -Board esp32c3_devkitc
+.\scripts\build_esp32_family.ps1 -Board esp32s2_devkitc
 ```
 
-产物：`build-*/zephyr/zephyr.bin`
+Linux/macOS：
+
+```bash
+./scripts/build_esp32_family.sh esp32s3_devkitm/esp32s3/procpu
+```
+
+产物：`build-<board>/zephyr/zephyr.bin`
 
 ### 4. 烧录
 
 ```powershell
-.\scripts\flash.ps1 -Port COM5
+.\scripts\flash.ps1 -Port COM5        # 或自动识别串口
+.\scripts\flash.ps1 -Port COM5 -BuildDir build-esp32s3_devkitm-esp32s3-procpu
 ```
 
-或：
-
-```powershell
-pio pkg exec -p tool-esptoolpy -- esptool.py -p COM5 -b 921600 --after hard-reset write-flash 0x0 build-...\zephyr\zephyr.bin
-```
+可选：`-Flash` 参数在编译后直接烧录。
 
 ## 示例
 
